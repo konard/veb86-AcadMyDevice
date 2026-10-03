@@ -88,11 +88,17 @@ TEST(EntryPoint_RegistersClassAndCommand_AndUnloadRemovesThem)
     // main() уже вызвал kInitAppMsg.
     AcRxClass* pClass = mockFindClass(L"MyDevice");
     CHECK(pClass != nullptr);
+    if (!pClass)
+        return;
     CHECK(pClass == MyDevice::desc());
     CHECK(pClass->myParent() == AcDbEntity::desc());
     CHECK_WSTR(pClass->dxfName(), L"MYDEVICE");
     CHECK(std::wstring(pClass->appName()).find(L"MyDeviceApp") == 0);
     CHECK_EQ(pClass->proxyFlags(), static_cast<int>(AcDbProxyEntity::kNoOperation));
+    int dwgVer = 0, maintVer = 0;
+    pClass->getClassVersion(dwgVer, maintVer);
+    CHECK_EQ(dwgVer, static_cast<int>(AcDb::kDHL_CURRENT));
+    CHECK_EQ(maintVer, static_cast<int>(AcDb::kMReleaseCurrent));
 
     const AcEdCommandStack::Command* pCmd = acedRegCmds->lookupGlobalCmd(L"MYDEVICE");
     CHECK(pCmd != nullptr);

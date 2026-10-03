@@ -469,6 +469,7 @@ public:
     const ACHAR* appName() const { return m_appName.c_str(); }
     AcRxClass* myParent() const { return m_parent; }
     int proxyFlags() const { return m_proxyFlags; }
+    void getClassVersion(int& dwgVer, int& maintVer) const { dwgVer = m_dwgVer; maintVer = m_maintVer; }
     AcRxObject* create() const { return m_create ? m_create() : nullptr; }
     bool isDerivedFrom(const AcRxClass* other) const
     {

@@ -14,7 +14,7 @@ public:
 
     // Версия формата данных MyDevice в DWG/DXF.
     // Увеличивать при каждом изменении набора сохраняемых полей.
-    static const Adesk::Int16 kCurrentVersion = 1;
+    static constexpr Adesk::Int16 kCurrentVersion = 1;
 
     // Геометрия в локальной системе координат объекта (единицы чертежа).
     static const double kWidth;       // ширина прямоугольника

@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MyDevice.arx — приложение ObjectARX для AutoCAD 2021.
+  Требуется Visual Studio 2019 (набор инструментов v142) и ObjectARX SDK 2021.
+  Путь к SDK задаётся свойством ObjectArxDir: по умолчанию берётся из переменной
+  окружения OBJECTARX2021, иначе используется C:\ObjectARX 2021\.
+  Пример: msbuild MyDevice.sln /p:Configuration=Release /p:Platform=x64 /p:ObjectArxDir="D:\SDK\ObjectARX 2021\"
+-->
+<Project DefaultTargets="Build" ToolsVersion="16.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectName>MyDevice</ProjectName>
+    <ProjectGuid>{98928B74-58C8-4835-AFDF-814B62018E86}</ProjectGuid>
+    <RootNamespace>MyDevice</RootNamespace>
+    <Keyword>Win32Proj</Keyword>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <PropertyGroup Label="ObjectARX">
+    <ObjectArxDir Condition="'$(ObjectArxDir)' == '' and '$(OBJECTARX2021)' != ''">$(OBJECTARX2021)</ObjectArxDir>
+    <ObjectArxDir Condition="'$(ObjectArxDir)' == ''">C:\ObjectARX 2021\</ObjectArxDir>
+    <ObjectArxDir Condition="!HasTrailingSlash('$(ObjectArxDir)')">$(ObjectArxDir)\</ObjectArxDir>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <PlatformToolset>v142</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <UseOfMfc>false</UseOfMfc>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'" Label="Configuration">
+    <UseDebugLibraries>false</UseDebugLibraries>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'" Label="Configuration">
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup>
+    <TargetExt>.arx</TargetExt>
+    <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)obj\$(Platform)\$(Configuration)\</IntDir>
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <!-- Приложения ObjectARX всегда используют выпускную CRT (/MD) и не определяют _DEBUG. -->
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <PreprocessorDefinitions>WIN32;_WINDOWS;_WIN32_IE=0x0600;UNICODE;_UNICODE;_AFXDLL;_CRT_SECURE_CPP_OVERLOAD_STANDARD_NAMES=1;_CRT_SECURE_CPP_OVERLOAD_STANDARD_NAMES_COUNT=1;_CRT_STDIO_ISO_WIDE_SPECIFIERS=1;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ObjectArxDir)inc;$(ObjectArxDir)inc-$(Platform);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <TreatWChar_tAsBuiltInType>true</TreatWChar_tAsBuiltInType>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
+      <StringPooling>true</StringPooling>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(ObjectArxDir)lib-$(Platform);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>rxapi.lib;acdb24.lib;acge24.lib;acgiapi.lib;ac1st24.lib;accore.lib;acad.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
+    <ClCompile>
+      <Optimization>Disabled</Optimization>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+    <ClCompile>
+      <Optimization>MaxSpeed</Optimization>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+    </ClCompile>
+    <Link>
+      <OptimizeReferences>true</OptimizeReferences>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="src\acrxEntryPoint.cpp" />
+    <ClCompile Include="src\MyDevice.cpp" />
+    <ClCompile Include="src\MyDeviceCommand.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\MyDevice.h" />
+    <ClInclude Include="src\MyDeviceCommand.h" />
+    <ClInclude Include="src\StdAfx.h" />
+  </ItemGroup>
+  <Target Name="CheckObjectArxDir" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(ObjectArxDir)inc\rxregsvc.h')" Text="ObjectARX 2021 SDK не найден в '$(ObjectArxDir)'. Задайте переменную окружения OBJECTARX2021 или свойство /p:ObjectArxDir=..." />
+  </Target>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

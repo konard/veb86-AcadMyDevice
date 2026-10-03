@@ -10,7 +10,9 @@ mutate() {  # file sed-expr description
     sed -i "$2" "$B/$1"
     if cmp -s "$B/$1" "$B/$1.orig"; then
         echo "NOT APPLIED: $3"; status=1
-    elif cmake --build build >/dev/null 2>&1 && ./build/MyDeviceTests >/dev/null; then
+    elif ! cmake --build build >/dev/null 2>&1; then
+        echo "NO BUILD:    $3"; status=1   # мутация должна компилироваться
+    elif ./build/MyDeviceTests >/dev/null; then
         echo "SURVIVED:    $3"; status=1
     else
         echo "killed:      $3"
@@ -25,6 +27,7 @@ mutate MyDevice.cpp 's/m_text1(_T("TEXT1"))/m_text1(_T("TXT1"))/;s/m_text1(L"TEX
 mutate MyDevice.cpp '185s/kHeight/kWidth/' "размер прямоугольника"
 mutate MyDevice.cpp '313s/pFiler->pushBackItem();//' "нет pushBackItem в dxfIn"
 mutate MyDevice.cpp '398s/!xform.isUniScaledOrtho()/false/' "нет проверки неравномерного масштаба"
-mutate MyDeviceCommand.cpp '30s/es = pModelSpace->appendAcDbEntity(entityId, pEntity);/es = Acad::eOk;/' "объект не добавляется в модель"
+mutate MyDeviceCommand.cpp '30s/es = pModelSpace->appendAcDbEntity(entityId, pEntity);/es = Acad::eOk; (void)entityId;/' "объект не добавляется в модель"
+mutate MyDeviceCommand.cpp '34s/pEntity->close();/;/' "объект не закрывается после добавления"
 cmake --build build >/dev/null
 exit $status

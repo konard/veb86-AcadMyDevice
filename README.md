@@ -192,3 +192,4 @@ ctest --test-dir build --output-on-failure
 
 * Тексты задаются только из кода (`setText1()`/`setText2()`); Properties Palette, `BlockName` и `Visibility` — следующие этапы.
 * Неравномерное масштабирование (`eCannotScaleNonUniformly`) не поддерживается.
+* При зеркалировании (`MIRROR`) отражаются и тексты, как при `MIRRTEXT = 1`.

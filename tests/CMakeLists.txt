@@ -20,6 +20,8 @@ set(PRODUCT_FILES
     MyDevice.cpp
     MyDeviceCommand.h
     MyDeviceCommand.cpp
+    MyDeviceProperties.h
+    MyDeviceProperties.cpp
     acrxEntryPoint.cpp)
 set(PRODUCT_SOURCES)
 foreach(file ${PRODUCT_FILES})

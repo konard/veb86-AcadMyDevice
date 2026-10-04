@@ -11,10 +11,13 @@
 // и этапа 2:
 //  * у каждого текста есть содержимое, высота, локальное положение X/Y, слой и стиль;
 //  * тексты рисуются своим стилем, на своём слое и вместе с объектом преобразуются;
-//  * все свойства сохраняются в DWG/DXF (версия 2), данные версии 1 читаются.
+//  * все свойства сохраняются в DWG/DXF (версия 2), данные версии 1 читаются;
+//  * палитра свойств: категории «Text 1»/«Text 2» по шесть свойств, чтение и запись
+//    значений, создание отсутствующего слоя, выбор только существующего стиля.
 #include "StdAfx.h"
 #include "MyDevice.h"
 #include "MyDeviceCommand.h"
+#include "MyDeviceProperties.h"
 #include "mock_filers.h"
 #include "test_framework.h"
 
@@ -1300,6 +1303,235 @@ TEST(Stage2_Scenario_EditSaveReopen_RestoresEverything)
         }
         delete pObj;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Этап 2: свойства для палитры свойств (MyDeviceProperties)
+// ---------------------------------------------------------------------------
+
+TEST(Stage2_Properties_TwoCategoriesWithSixPropertiesEach)
+{
+    const wchar_t* const names[] = { L"Text", L"Height", L"Position X", L"Position Y",
+                                     L"Layer", L"Font" };
+    CHECK_EQ(MyDeviceProperties::count(), 12);
+    for (int i = 0; i < MyDeviceProperties::count(); ++i)
+    {
+        const MyDeviceProperties::Descriptor& d = MyDeviceProperties::at(i);
+        const int textIndex = i / MyDeviceProperties::kFieldCount;
+        CHECK_EQ(d.textIndex, textIndex);
+        CHECK_EQ(static_cast<int>(d.field), i % MyDeviceProperties::kFieldCount);
+        CHECK_WSTR(d.category, textIndex == MyDevice::kText1 ? L"Text 1" : L"Text 2");
+        CHECK_WSTR(d.name, names[i % MyDeviceProperties::kFieldCount]);
+        CHECK(d.description != nullptr && *d.description != L'\0');
+    }
+    CHECK(MyDeviceProperties::isNumeric(MyDeviceProperties::kHeight));
+    CHECK(MyDeviceProperties::isNumeric(MyDeviceProperties::kPositionX));
+    CHECK(MyDeviceProperties::isNumeric(MyDeviceProperties::kPositionY));
+    CHECK(!MyDeviceProperties::isNumeric(MyDeviceProperties::kText));
+    CHECK(!MyDeviceProperties::isNumeric(MyDeviceProperties::kLayer));
+    CHECK(!MyDeviceProperties::isNumeric(MyDeviceProperties::kFont));
+}
+
+TEST(Stage2_Properties_GetReturnsTextValues)
+{
+    mock::reset();
+    MyDevice* pDevice = appendStyledDevice();
+    typedef MyDeviceProperties P;
+    CHECK_WSTR(P::getString(*pDevice, MyDevice::kText1, P::kText).kACharPtr(), L"Насос");
+    CHECK_NEAR(P::getDouble(*pDevice, MyDevice::kText1, P::kHeight), 7.5, kTol);
+    CHECK_NEAR(P::getDouble(*pDevice, MyDevice::kText1, P::kPositionX), 2.0, kTol);
+    CHECK_NEAR(P::getDouble(*pDevice, MyDevice::kText1, P::kPositionY), 40.0, kTol);
+    CHECK_WSTR(P::getString(*pDevice, MyDevice::kText1, P::kLayer).kACharPtr(), L"LABELS");
+    CHECK_WSTR(P::getString(*pDevice, MyDevice::kText1, P::kFont).kACharPtr(), L"GOST");
+
+    CHECK_WSTR(P::getString(*pDevice, MyDevice::kText2, P::kText).kACharPtr(), L"Н-1");
+    CHECK_NEAR(P::getDouble(*pDevice, MyDevice::kText2, P::kHeight), 3.5, kTol);
+    CHECK_NEAR(P::getDouble(*pDevice, MyDevice::kText2, P::kPositionX), 60.0, kTol);
+    CHECK_NEAR(P::getDouble(*pDevice, MyDevice::kText2, P::kPositionY), -8.0, kTol);
+    CHECK_WSTR(P::getString(*pDevice, MyDevice::kText2, P::kLayer).kACharPtr(), L"NOTES");
+    CHECK_WSTR(P::getString(*pDevice, MyDevice::kText2, P::kFont).kACharPtr(), L"Standard");
+
+    // Неверный номер текста или тип свойства.
+    CHECK(P::getString(*pDevice, 2, P::kText).isEmpty());
+    CHECK(P::getString(*pDevice, MyDevice::kText1, P::kHeight).isEmpty());
+    CHECK_NEAR(P::getDouble(*pDevice, -1, P::kHeight), 0.0, kTol);
+    CHECK_NEAR(P::getDouble(*pDevice, MyDevice::kText1, P::kText), 0.0, kTol);
+}
+
+TEST(Stage2_Properties_SetChangesOnlyThatPropertyAndRedraws)
+{
+    mock::reset();
+    MyDevice* pDevice = appendStyledDevice();
+    typedef MyDeviceProperties P;
+    const MyDeviceText text1 = pDevice->textAt(MyDevice::kText1);
+
+    CHECK_EQ(P::setString(*pDevice, MyDevice::kText2, P::kText, L"Н-2"), Acad::eOk);
+    CHECK_EQ(P::setDouble(*pDevice, MyDevice::kText2, P::kHeight, 5.0), Acad::eOk);
+    CHECK_EQ(P::setDouble(*pDevice, MyDevice::kText2, P::kPositionX, 12.0), Acad::eOk);
+    CHECK_EQ(P::setDouble(*pDevice, MyDevice::kText2, P::kPositionY, 4.0), Acad::eOk);
+    CHECK_EQ(P::setString(*pDevice, MyDevice::kText2, P::kLayer, L"LABELS"), Acad::eOk);
+    CHECK_EQ(P::setString(*pDevice, MyDevice::kText2, P::kFont, L"GOST"), Acad::eOk);
+
+    CHECK_SAME_TEXT(pDevice->textAt(MyDevice::kText2),
+                    makeText(L"Н-2", 5.0, 12.0, 4.0, L"LABELS", L"GOST"));
+    CHECK_SAME_TEXT(pDevice->textAt(MyDevice::kText1), text1);
+
+    // Изображение строится из новых значений.
+    RecordingWorldDraw wd;
+    pDevice->worldDraw(&wd);
+    CHECK_EQ(wd.texts.size(), static_cast<size_t>(2));
+    if (wd.texts.size() == 2)
+    {
+        CHECK_WSTR(wd.texts[1].message, L"Н-2");
+        CHECK_POINT(wd.texts[1].position, AcGePoint3d(112.0, 54.0, 0.0));
+        CHECK_NEAR(wd.texts[1].height, 5.0, kTol);
+        CHECK_WSTR(wd.texts[1].styleName, L"GOST");
+        CHECK(wd.texts[1].layerId == findLayerId(L"LABELS"));
+    }
+}
+
+TEST(Stage2_Properties_SetRejectsInvalidValues)
+{
+    mock::reset();
+    MyDevice* pDevice = appendStyledDevice();
+    typedef MyDeviceProperties P;
+    const MyDeviceText text1 = pDevice->textAt(MyDevice::kText1);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+
+    CHECK_EQ(P::setDouble(*pDevice, MyDevice::kText1, P::kHeight, 0.0), Acad::eInvalidInput);
+    CHECK_EQ(P::setDouble(*pDevice, MyDevice::kText1, P::kHeight, -2.0), Acad::eInvalidInput);
+    CHECK_EQ(P::setDouble(*pDevice, MyDevice::kText1, P::kPositionX, nan), Acad::eInvalidInput);
+    CHECK_EQ(P::setDouble(*pDevice, MyDevice::kText1, P::kText, 1.0), Acad::eInvalidInput);
+    CHECK_EQ(P::setString(*pDevice, MyDevice::kText1, P::kHeight, L"1"), Acad::eInvalidInput);
+    CHECK_EQ(P::setString(*pDevice, 2, P::kText, L"x"), Acad::eInvalidInput);
+    CHECK_EQ(P::setDouble(*pDevice, -1, P::kHeight, 1.0), Acad::eInvalidInput);
+    // Шрифт — только существующий текстовый стиль.
+    CHECK_EQ(P::setString(*pDevice, MyDevice::kText1, P::kFont, L"NO_SUCH_STYLE"), Acad::eKeyNotFound);
+    CHECK_EQ(P::setString(*pDevice, MyDevice::kText1, P::kFont, L""), Acad::eKeyNotFound);
+    // Недопустимое имя слоя: слой не создаётся.
+    const size_t layers = acdbHostApplicationServices()->workingDatabase()->layerTable.records.size();
+    CHECK_EQ(P::setString(*pDevice, MyDevice::kText1, P::kLayer, L"A<B"), Acad::eInvalidInput);
+    CHECK_EQ(P::setString(*pDevice, MyDevice::kText1, P::kLayer, L"A|B"), Acad::eInvalidInput);
+    CHECK_EQ(acdbHostApplicationServices()->workingDatabase()->layerTable.records.size(), layers);
+
+    CHECK_SAME_TEXT(pDevice->textAt(MyDevice::kText1), text1);
+}
+
+TEST(Stage2_Properties_SetLayerCreatesMissingLayer)
+{
+    mock::reset();
+    MyDevice* pDevice = appendStyledDevice();
+    AcDbDatabase* pDb = acdbHostApplicationServices()->workingDatabase();
+    typedef MyDeviceProperties P;
+    CHECK(findLayerId(L"NEW LABELS").isNull());
+
+    CHECK_EQ(P::setString(*pDevice, MyDevice::kText1, P::kLayer, L"NEW LABELS"), Acad::eOk);
+    CHECK_WSTR(pDevice->textAt(MyDevice::kText1).layer.kACharPtr(), L"NEW LABELS");
+    CHECK(!findLayerId(L"NEW LABELS").isNull());
+    CHECK_EQ(pDb->lastLayerTableMode, AcDb::kForWrite);
+
+    RecordingWorldDraw wd;
+    pDevice->worldDraw(&wd);
+    CHECK_EQ(wd.texts.size(), static_cast<size_t>(2));
+    if (!wd.texts.empty())
+        CHECK(wd.texts[0].layerId == findLayerId(L"NEW LABELS"));
+
+    // Существующий слой (в любом регистре) и пустое имя не создают записей.
+    const int addCalls = pDb->layerTable.addCalls;
+    CHECK_EQ(P::setString(*pDevice, MyDevice::kText2, P::kLayer, L"new labels"), Acad::eOk);
+    CHECK_EQ(P::setString(*pDevice, MyDevice::kText2, P::kLayer, L""), Acad::eOk);
+    CHECK_EQ(pDb->layerTable.addCalls, addCalls);
+    CHECK(pDevice->textAt(MyDevice::kText2).layer.isEmpty());
+}
+
+TEST(Stage2_Properties_ObjectOutsideDatabaseUsesWorkingDatabase)
+{
+    mock::reset();
+    MyDevice device;
+    typedef MyDeviceProperties P;
+    CHECK(device.database() == nullptr);
+    CHECK_EQ(P::setString(device, MyDevice::kText1, P::kLayer, L"OUTSIDE"), Acad::eOk);
+    CHECK(!findLayerId(L"OUTSIDE").isNull());
+    CHECK_EQ(P::setString(device, MyDevice::kText1, P::kFont, L"Standard"), Acad::eOk);
+    CHECK(P::databaseOf(device) == acdbHostApplicationServices()->workingDatabase());
+}
+
+TEST(Stage2_Properties_EnsureLayer)
+{
+    mock::reset();
+    AcDbDatabase* pDb = acdbHostApplicationServices()->workingDatabase();
+    typedef MyDeviceProperties P;
+    CHECK_EQ(P::ensureLayer(pDb, L""), Acad::eOk);
+    CHECK_EQ(pDb->layerTable.addCalls, 0);
+    CHECK_EQ(P::ensureLayer(pDb, L"0"), Acad::eOk);
+    CHECK_EQ(pDb->layerTable.addCalls, 0);
+    CHECK_EQ(P::ensureLayer(pDb, L"Электрика"), Acad::eOk);
+    CHECK_EQ(pDb->layerTable.addCalls, 1);
+    CHECK(!findLayerId(L"Электрика").isNull());
+    CHECK_EQ(P::ensureLayer(pDb, L"Электрика"), Acad::eOk);
+    CHECK_EQ(pDb->layerTable.addCalls, 1);
+    CHECK_EQ(P::ensureLayer(pDb, L" lead"), Acad::eInvalidInput);
+    CHECK_EQ(P::ensureLayer(pDb, L"a*b"), Acad::eInvalidInput);
+    CHECK_EQ(pDb->layerTable.addCalls, 1);
+    CHECK_EQ(P::ensureLayer(nullptr, L"X"), Acad::eNullObjectPointer);
+}
+
+TEST(Stage2_Properties_LayerAndTextStyleLists)
+{
+    mock::reset();
+    AcDbDatabase* pDb = acdbHostApplicationServices()->workingDatabase();
+    pDb->mockAddLayer(L"LABELS");
+    pDb->mockAddTextStyle(L"GOST");
+    pDb->mockAddTextStyle(L"SHAPES", true);
+    typedef MyDeviceProperties P;
+
+    std::vector<AcString> layers;
+    CHECK_EQ(P::layerNames(pDb, layers), Acad::eOk);
+    CHECK_EQ(layers.size(), static_cast<size_t>(2));
+    if (layers.size() == 2)
+    {
+        CHECK_WSTR(layers[0].kACharPtr(), L"0");
+        CHECK_WSTR(layers[1].kACharPtr(), L"LABELS");
+    }
+
+    std::vector<AcString> styles;
+    CHECK_EQ(P::textStyleNames(pDb, styles), Acad::eOk);
+    CHECK_EQ(styles.size(), static_cast<size_t>(2));
+    if (styles.size() == 2)
+    {
+        CHECK_WSTR(styles[0].kACharPtr(), L"Standard");
+        CHECK_WSTR(styles[1].kACharPtr(), L"GOST");
+    }
+    // Чтение списков не меняет чертёж.
+    CHECK_EQ(pDb->lastLayerTableMode, AcDb::kForRead);
+    CHECK_EQ(pDb->lastTextStyleTableMode, AcDb::kForRead);
+
+    styles.push_back(L"stale");
+    CHECK_EQ(P::textStyleNames(nullptr, styles), Acad::eNullObjectPointer);
+    CHECK(styles.empty());
+    CHECK_EQ(P::layerNames(nullptr, layers), Acad::eNullObjectPointer);
+    CHECK(layers.empty());
+}
+
+TEST(Stage2_Properties_ChangesSurviveSaveAndReopen)
+{
+    mock::reset();
+    MyDevice* pDevice = appendStyledDevice();
+    typedef MyDeviceProperties P;
+    CHECK_EQ(P::setString(*pDevice, MyDevice::kText1, P::kLayer, L"CREATED"), Acad::eOk);
+    CHECK_EQ(P::setDouble(*pDevice, MyDevice::kText1, P::kPositionY, 22.0), Acad::eOk);
+    CHECK_EQ(P::setString(*pDevice, MyDevice::kText2, P::kFont, L"GOST"), Acad::eOk);
+
+    MemoryDwgFiler dwg;
+    CHECK_EQ(pDevice->dwgOutFields(&dwg), Acad::eOk);
+    AcRxObject* pObj = MyDevice::desc()->create();
+    MyDevice* pReopened = MyDevice::cast(pObj);
+    dwg.rewind();
+    CHECK_EQ(pReopened->dwgInFields(&dwg), Acad::eOk);
+    CHECK_WSTR(P::getString(*pReopened, MyDevice::kText1, P::kLayer).kACharPtr(), L"CREATED");
+    CHECK_NEAR(P::getDouble(*pReopened, MyDevice::kText1, P::kPositionY), 22.0, kTol);
+    CHECK_WSTR(P::getString(*pReopened, MyDevice::kText2, P::kFont).kACharPtr(), L"GOST");
+    delete pObj;
 }
 
 int main()

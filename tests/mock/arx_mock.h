@@ -47,6 +47,7 @@ namespace Acad
         eOk = 0,
         eNotApplicable = 3,
         eInvalidInput = 4,
+        eNullObjectPointer = 9,
         eOutOfMemory = 11,
         eInvalidDxfCode = 16,
         eMissingDxfField = 17,

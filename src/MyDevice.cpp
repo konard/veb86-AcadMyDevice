@@ -2,6 +2,8 @@
 #include "StdAfx.h"
 #include "MyDevice.h"
 
+#include <cmath>
+
 ACRX_DXF_DEFINE_MEMBERS(
     MyDevice, AcDbEntity,
     AcDb::kDHL_CURRENT, AcDb::kMReleaseCurrent,
@@ -15,6 +17,7 @@ const double MyDevice::kWidth = 100.0;
 const double MyDevice::kHeight = 50.0;
 const double MyDevice::kTextHeight = 10.0;
 const double MyDevice::kTextMargin = 5.0;
+const ACHAR* const MyDevice::kDefaultTextStyle = _T("Standard");
 
 namespace
 {
@@ -32,6 +35,16 @@ namespace
     const AcDb::DxfCode kDxfNormal = AcDb::kDxfNormalX;                                  // 210
     const AcDb::DxfCode kDxfText1 = AcDb::kDxfXTextString;                               // 300
     const AcDb::DxfCode kDxfText2 = static_cast<AcDb::DxfCode>(AcDb::kDxfXTextString + 1); // 301
+
+    // Свойства текстов (версия 2), по одному коду на Text1 и Text2.
+    AcDb::DxfCode dxfCode(int base, int index)
+    {
+        return static_cast<AcDb::DxfCode>(base + index);
+    }
+    const int kDxfTextHeightBase = AcDb::kDxfReal + 1;            // 41, 42
+    const int kDxfTextPositionBase = AcDb::kDxfXCoord + 2;        // 12, 13
+    const int kDxfTextLayerBase = AcDb::kDxfXTextString + 2;      // 302, 303
+    const int kDxfTextStyleBase = AcDb::kDxfXTextString + 4;      // 304, 305
 
     const ACHAR kDxfSubclassName[] = _T("MyDevice");
 
@@ -62,6 +75,48 @@ namespace
         xDirection *= 1.0 / xLength;
         return true;
     }
+
+    // Высота и положение должны быть конечными числами, высота — положительной,
+    // стиль — непустым (без стиля AutoCAD не знает, каким шрифтом рисовать).
+    bool isValidText(const MyDeviceText& text)
+    {
+        return text.height > kTolerance && std::isfinite(text.height)
+            && std::isfinite(text.x) && std::isfinite(text.y)
+            && !text.textStyle.isEmpty();
+    }
+
+    // Идентификатор слоя по имени или пустой идентификатор. Ничего не создаёт:
+    // отрисовка не должна менять базу данных.
+    AcDbObjectId findLayer(AcDbDatabase* pDb, const AcString& name)
+    {
+        AcDbObjectId id;
+        AcDbLayerTable* pTable = nullptr;
+        if (pDb == nullptr || name.isEmpty()
+            || pDb->getLayerTable(pTable, AcDb::kForRead) != Acad::eOk)
+        {
+            return id;
+        }
+        if (pTable->getAt(name.kACharPtr(), id) != Acad::eOk)
+            id = AcDbObjectId();
+        pTable->close();
+        return id;
+    }
+
+    // Идентификатор текстового стиля по имени или пустой идентификатор.
+    AcDbObjectId findTextStyle(AcDbDatabase* pDb, const AcString& name)
+    {
+        AcDbObjectId id;
+        AcDbTextStyleTable* pTable = nullptr;
+        if (pDb == nullptr || name.isEmpty()
+            || pDb->getTextStyleTable(pTable, AcDb::kForRead) != Acad::eOk)
+        {
+            return id;
+        }
+        if (pTable->getAt(name.kACharPtr(), id) != Acad::eOk)
+            id = AcDbObjectId();
+        pTable->close();
+        return id;
+    }
 }
 
 MyDevice::MyDevice()
@@ -69,9 +124,9 @@ MyDevice::MyDevice()
     , m_xDirection(AcGeVector3d::kXAxis)
     , m_normal(AcGeVector3d::kZAxis)
     , m_scale(1.0)
-    , m_text1(_T("TEXT1"))
-    , m_text2(_T("TEXT2"))
 {
+    for (int i = 0; i < kTextCount; ++i)
+        m_texts[i] = defaultText(i);
 }
 
 MyDevice::MyDevice(const AcGePoint3d& position)
@@ -142,27 +197,57 @@ Acad::ErrorStatus MyDevice::setScale(double scale)
 AcString MyDevice::text1() const
 {
     assertReadEnabled();
-    return m_text1;
+    return m_texts[kText1].text;
 }
 
 Acad::ErrorStatus MyDevice::setText1(const AcString& text)
 {
     assertWriteEnabled();
-    m_text1 = text;
+    m_texts[kText1].text = text;
     return Acad::eOk;
 }
 
 AcString MyDevice::text2() const
 {
     assertReadEnabled();
-    return m_text2;
+    return m_texts[kText2].text;
 }
 
 Acad::ErrorStatus MyDevice::setText2(const AcString& text)
 {
     assertWriteEnabled();
-    m_text2 = text;
+    m_texts[kText2].text = text;
     return Acad::eOk;
+}
+
+MyDeviceText MyDevice::textAt(int index) const
+{
+    assertReadEnabled();
+    if (index < 0 || index >= kTextCount)
+        return defaultText(kText1);
+    return m_texts[index];
+}
+
+Acad::ErrorStatus MyDevice::setTextAt(int index, const MyDeviceText& data)
+{
+    if (index < 0 || index >= kTextCount || !isValidText(data))
+        return Acad::eInvalidInput;
+
+    assertWriteEnabled();
+    m_texts[index] = data;
+    return Acad::eOk;
+}
+
+MyDeviceText MyDevice::defaultText(int index)
+{
+    // Положение и высота совпадают с отрисовкой этапа 1.
+    MyDeviceText text;
+    text.text = (index == kText2) ? _T("TEXT2") : _T("TEXT1");
+    text.height = kTextHeight;
+    text.x = kTextMargin;
+    text.y = (index == kText2) ? kText2BaselineY : kText1BaselineY;
+    text.textStyle = kDefaultTextStyle;
+    return text;
 }
 
 AcGeMatrix3d MyDevice::localToWorld() const
@@ -206,8 +291,17 @@ Acad::ErrorStatus MyDevice::dwgOutFields(AcDbDwgFiler* pFiler) const
     pFiler->writeVector3d(m_xDirection);
     pFiler->writeVector3d(m_normal);
     pFiler->writeDouble(m_scale);
-    pFiler->writeString(m_text1);
-    pFiler->writeString(m_text2);
+    pFiler->writeString(m_texts[kText1].text);
+    pFiler->writeString(m_texts[kText2].text);
+    // Версия 2: остальные свойства текстов дописываются после полей версии 1.
+    for (int i = 0; i < kTextCount; ++i)
+    {
+        pFiler->writeDouble(m_texts[i].height);
+        pFiler->writeDouble(m_texts[i].x);
+        pFiler->writeDouble(m_texts[i].y);
+        pFiler->writeString(m_texts[i].layer);
+        pFiler->writeString(m_texts[i].textStyle);
+    }
 
     return pFiler->filerStatus();
 }
@@ -231,10 +325,28 @@ Acad::ErrorStatus MyDevice::dwgInFields(AcDbDwgFiler* pFiler)
     pFiler->readVector3d(&m_xDirection);
     pFiler->readVector3d(&m_normal);
     pFiler->readDouble(&m_scale);
-    pFiler->readString(m_text1);
-    pFiler->readString(m_text2);
 
-    return pFiler->filerStatus();
+    // В версии 1 были только строки — остальное берётся по умолчанию.
+    MyDeviceText texts[kTextCount] = { defaultText(kText1), defaultText(kText2) };
+    pFiler->readString(texts[kText1].text);
+    pFiler->readString(texts[kText2].text);
+    if (version >= 2)
+    {
+        for (int i = 0; i < kTextCount; ++i)
+        {
+            pFiler->readDouble(&texts[i].height);
+            pFiler->readDouble(&texts[i].x);
+            pFiler->readDouble(&texts[i].y);
+            pFiler->readString(texts[i].layer);
+            pFiler->readString(texts[i].textStyle);
+        }
+    }
+    if ((es = pFiler->filerStatus()) != Acad::eOk)
+        return es;
+
+    for (int i = 0; i < kTextCount; ++i)
+        m_texts[i] = texts[i];
+    return Acad::eOk;
 }
 
 // ---------------------------------------------------------------------------
@@ -256,8 +368,16 @@ Acad::ErrorStatus MyDevice::dxfOutFields(AcDbDxfFiler* pFiler) const
     pFiler->writeDouble(kDxfScale, m_scale);
     // Нормаль всегда пишется с максимальной точностью.
     pFiler->writeVector3d(kDxfNormal, m_normal, 16);
-    pFiler->writeString(kDxfText1, m_text1);
-    pFiler->writeString(kDxfText2, m_text2);
+    pFiler->writeString(kDxfText1, m_texts[kText1].text);
+    pFiler->writeString(kDxfText2, m_texts[kText2].text);
+    for (int i = 0; i < kTextCount; ++i)
+    {
+        const MyDeviceText& text = m_texts[i];
+        pFiler->writeDouble(dxfCode(kDxfTextHeightBase, i), text.height);
+        pFiler->writePoint3d(dxfCode(kDxfTextPositionBase, i), AcGePoint3d(text.x, text.y, 0.0));
+        pFiler->writeString(dxfCode(kDxfTextLayerBase, i), text.layer);
+        pFiler->writeString(dxfCode(kDxfTextStyleBase, i), text.textStyle);
+    }
 
     return pFiler->filerStatus();
 }
@@ -278,8 +398,7 @@ Acad::ErrorStatus MyDevice::dxfInFields(AcDbDxfFiler* pFiler)
     AcGeVector3d xDirection = AcGeVector3d::kXAxis;
     AcGeVector3d normal = AcGeVector3d::kZAxis;
     double scale = 1.0;
-    AcString text1(_T("TEXT1"));
-    AcString text2(_T("TEXT2"));
+    MyDeviceText texts[kTextCount] = { defaultText(kText1), defaultText(kText2) };
 
     Acad::ErrorStatus es = Acad::eOk;
     resbuf rb;
@@ -303,10 +422,27 @@ Acad::ErrorStatus MyDevice::dxfInFields(AcDbDxfFiler* pFiler)
             normal = asVector(rb);
             break;
         case kDxfText1:
-            text1 = rb.resval.rstring;
+            texts[kText1].text = rb.resval.rstring;
             break;
         case kDxfText2:
-            text2 = rb.resval.rstring;
+            texts[kText2].text = rb.resval.rstring;
+            break;
+        case kDxfTextHeightBase + kText1:
+        case kDxfTextHeightBase + kText2:
+            texts[rb.restype - kDxfTextHeightBase].height = rb.resval.rreal;
+            break;
+        case kDxfTextPositionBase + kText1:
+        case kDxfTextPositionBase + kText2:
+            texts[rb.restype - kDxfTextPositionBase].x = rb.resval.rpoint[0];
+            texts[rb.restype - kDxfTextPositionBase].y = rb.resval.rpoint[1];
+            break;
+        case kDxfTextLayerBase + kText1:
+        case kDxfTextLayerBase + kText2:
+            texts[rb.restype - kDxfTextLayerBase].layer = rb.resval.rstring;
+            break;
+        case kDxfTextStyleBase + kText1:
+        case kDxfTextStyleBase + kText2:
+            texts[rb.restype - kDxfTextStyleBase].textStyle = rb.resval.rstring;
             break;
         default:
             // Чужая группа — возвращаем её, чтобы её прочитал следующий подкласс.
@@ -335,13 +471,23 @@ Acad::ErrorStatus MyDevice::dxfInFields(AcDbDxfFiler* pFiler)
                          _T("\nMyDevice: invalid scale %g."), scale);
         return pFiler->filerStatus();
     }
+    for (int i = 0; i < kTextCount; ++i)
+    {
+        if (!isValidText(texts[i]))
+        {
+            pFiler->setError(Acad::eInvalidDxfCode,
+                             _T("\nMyDevice: invalid height, position or text style of Text%d."),
+                             i + 1);
+            return pFiler->filerStatus();
+        }
+    }
 
     m_position = position;
     m_xDirection = xDirection;
     m_normal = normal;
     m_scale = scale;
-    m_text1 = text1;
-    m_text2 = text2;
+    for (int i = 0; i < kTextCount; ++i)
+        m_texts[i] = texts[i];
 
     return pFiler->filerStatus();
 }
@@ -364,20 +510,41 @@ Adesk::Boolean MyDevice::subWorldDraw(AcGiWorldDraw* pWd)
     pWd->geometry().polyline(5, outline, &m_normal);
 
     // Тексты рисуются примитивами AcGi, без создания AcDbText/AcDbMText.
-    const AcGeMatrix3d xform = localToWorld();
-    const double textHeight = kTextHeight * m_scale;
-
-    AcGePoint3d text1Position(kTextMargin, kText1BaselineY, 0.0);
-    text1Position.transformBy(xform);
-    pWd->geometry().text(text1Position, m_normal, m_xDirection,
-                         textHeight, 1.0, 0.0, m_text1.kACharPtr());
-
-    AcGePoint3d text2Position(kTextMargin, kText2BaselineY, 0.0);
-    text2Position.transformBy(xform);
-    pWd->geometry().text(text2Position, m_normal, m_xDirection,
-                         textHeight, 1.0, 0.0, m_text2.kACharPtr());
+    // Прямоугольник уже нарисован на слое объекта, поэтому слой меняется только здесь.
+    AcDbDatabase* pDb = database();
+    if (pDb == nullptr)
+        pDb = acdbHostApplicationServices()->workingDatabase();
+    for (int i = 0; i < kTextCount; ++i)
+        drawText(pWd, pDb, m_texts[i]);
 
     return Adesk::kTrue;
+}
+
+void MyDevice::drawText(AcGiWorldDraw* pWd, AcDbDatabase* pDb, const MyDeviceText& text) const
+{
+    // Слой текста, если он есть в чертеже, иначе — слой самого MyDevice.
+    // Слой назначается каждому тексту: иначе текст унаследовал бы слой предыдущего.
+    AcDbObjectId textLayerId = findLayer(pDb, text.layer);
+    if (textLayerId.isNull())
+        textLayerId = layerId();
+    if (!textLayerId.isNull())
+        pWd->subEntityTraits().setLayer(textLayerId);
+
+    // Шрифт задаётся стандартным текстовым стилем AutoCAD; если стиль удалён — Standard.
+    AcGiTextStyle style(pDb);
+    AcDbObjectId styleId = findTextStyle(pDb, text.textStyle);
+    if (styleId.isNull())
+        styleId = findTextStyle(pDb, kDefaultTextStyle);
+    if (!styleId.isNull())
+        fromAcDbTextStyle(style, styleId);
+    // Высота задаётся свойством, а не стилем; масштаб объекта её увеличивает.
+    style.setTextSize(text.height * m_scale);
+    style.loadStyleRec(pDb);
+
+    AcGePoint3d position(text.x, text.y, 0.0);
+    position.transformBy(localToWorld());
+    pWd->geometry().text(position, m_normal, m_xDirection,
+                         text.text.kACharPtr(), -1, Adesk::kFalse, style);
 }
 
 void MyDevice::subList() const
@@ -388,8 +555,17 @@ void MyDevice::subList() const
     acutPrintf(_T("%18s%16s X = %-9.16q0, Y = %-9.16q0, Z = %-9.16q0\n"),
                _T(""), _T("Insertion point:"),
                m_position.x, m_position.y, m_position.z);
-    acutPrintf(_T("%18s%16s %s\n"), _T(""), _T("Text1:"), m_text1.kACharPtr());
-    acutPrintf(_T("%18s%16s %s\n"), _T(""), _T("Text2:"), m_text2.kACharPtr());
+    for (int i = 0; i < kTextCount; ++i)
+    {
+        const MyDeviceText& text = m_texts[i];
+        acutPrintf(_T("%18sText%d: %s\n"), _T(""), i + 1, text.text.kACharPtr());
+        acutPrintf(_T("%18s%16s %-9.16q0\n"), _T(""), _T("Height:"), text.height);
+        acutPrintf(_T("%18s%16s X = %-9.16q0, Y = %-9.16q0\n"), _T(""), _T("Position:"),
+                   text.x, text.y);
+        acutPrintf(_T("%18s%16s %s\n"), _T(""), _T("Layer:"),
+                   text.layer.isEmpty() ? _T("(MyDevice layer)") : text.layer.kACharPtr());
+        acutPrintf(_T("%18s%16s %s\n"), _T(""), _T("Text style:"), text.textStyle.kACharPtr());
+    }
 }
 
 Acad::ErrorStatus MyDevice::subTransformBy(const AcGeMatrix3d& xform)
@@ -424,6 +600,17 @@ Acad::ErrorStatus MyDevice::subGetGeomExtents(AcDbExtents& extents) const
     getCorners(corners);
     for (int i = 0; i < 4; ++i)
         extents.addPoint(corners[i]);
+
+    // Тексты могут выходить за прямоугольник. Ширина текста зависит от шрифта,
+    // поэтому учитываются только начало базовой линии и верх первого символа.
+    const AcGeMatrix3d xform = localToWorld();
+    for (int i = 0; i < kTextCount; ++i)
+    {
+        AcGePoint3d base(m_texts[i].x, m_texts[i].y, 0.0);
+        AcGePoint3d top(m_texts[i].x, m_texts[i].y + m_texts[i].height, 0.0);
+        extents.addPoint(base.transformBy(xform));
+        extents.addPoint(top.transformBy(xform));
+    }
     return Acad::eOk;
 }
 

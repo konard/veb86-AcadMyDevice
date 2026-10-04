@@ -65,7 +65,10 @@ namespace
             testing::fail(file, line, "Text1 differs: " + testing::narrow(actual.text1().kACharPtr()));
         if (!(actual.text2() == expected.text2()))
             testing::fail(file, line, "Text2 differs: " + testing::narrow(actual.text2().kACharPtr()));
-        if (!(actual.layer() == expected.layer()))
+        AcString actualLayer, expectedLayer;
+        actual.layer(actualLayer);
+        expected.layer(expectedLayer);
+        if (actualLayer != expectedLayer)
             testing::fail(file, line, "layer differs");
     }
 

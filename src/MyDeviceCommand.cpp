@@ -62,6 +62,18 @@ void MyDeviceCommand()
     pDevice->setDatabaseDefaults(pDb);
     pDevice->setOrientation(xDirection, normal);
 
+    // Тексты нового объекта лежат на текущем слое — так слой виден в палитре свойств.
+    AcString currentLayer;
+    if (pDevice->layer(currentLayer) == Acad::eOk)
+    {
+        for (int i = 0; i < MyDevice::kTextCount; ++i)
+        {
+            MyDeviceText text = pDevice->textAt(i);
+            text.layer = currentLayer;
+            pDevice->setTextAt(i, text);
+        }
+    }
+
     AcDbObjectId deviceId;
     const Acad::ErrorStatus es = appendToModelSpace(pDb, pDevice, deviceId);
     if (es != Acad::eOk)

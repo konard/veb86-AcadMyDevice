@@ -306,8 +306,11 @@ private:
     }
 };
 
-// Записывает все графические примитивы, которые объект выдаёт в subWorldDraw().
-class RecordingWorldDraw : public AcGiWorldDraw, public AcGiWorldGeometry
+// Записывает все графические примитивы, которые объект выдаёт в subWorldDraw(),
+// вместе со слоем, установленным через subEntityTraits() на момент вызова.
+// Пустой идентификатор слоя означает «слой самого объекта» (setLayer не вызывался).
+class RecordingWorldDraw : public AcGiWorldDraw, public AcGiWorldGeometry,
+                           public AcGiSubEntityTraits
 {
 public:
     struct Polyline
@@ -315,6 +318,7 @@ public:
         std::vector<AcGePoint3d> points;
         bool hasNormal;
         AcGeVector3d normal;
+        AcDbObjectId layerId;
     };
 
     struct Text
@@ -326,17 +330,37 @@ public:
         double width;
         double oblique;
         std::wstring message;
+        AcDbObjectId layerId;
+        // Только для вызова со стилем: имя стиля, признак загрузки шрифта, length и raw.
+        bool hasStyle = false;
+        std::wstring styleName;
+        bool styleLoaded = false;
+        Adesk::Int32 length = 0;
+        bool raw = false;
     };
 
     mutable std::vector<Polyline> polylines;
     mutable std::vector<Text> texts;
     bool abort = false;
+    AcDbObjectId currentLayer;
+    int setLayerCalls = 0;
 
     AcGiWorldGeometry& geometry() const override
     {
         return const_cast<RecordingWorldDraw&>(*this);
     }
+    AcGiSubEntityTraits& subEntityTraits() const override
+    {
+        return const_cast<RecordingWorldDraw&>(*this);
+    }
     Adesk::Boolean regenAbort() const override { return abort; }
+
+    void setLayer(const AcDbObjectId layerId) override
+    {
+        currentLayer = layerId;
+        setLayerCalls++;
+    }
+    AcDbObjectId layerId() const override { return currentLayer; }
 
     Adesk::Boolean polyline(const Adesk::UInt32 nbPoints, const AcGePoint3d* pVertexList,
                             const AcGeVector3d* pNormal, Adesk::LongPtr) const override
@@ -346,6 +370,7 @@ public:
         pl.hasNormal = pNormal != nullptr;
         if (pNormal)
             pl.normal = *pNormal;
+        pl.layerId = currentLayer;
         polylines.push_back(pl);
         return Adesk::kFalse;
     }
@@ -355,8 +380,39 @@ public:
                         const double width, const double oblique,
                         const ACHAR* pMsg) const override
     {
-        texts.push_back(Text{ position, normal, direction, height, width, oblique,
-                              pMsg ? pMsg : L"" });
+        Text t;
+        t.position = position;
+        t.normal = normal;
+        t.direction = direction;
+        t.height = height;
+        t.width = width;
+        t.oblique = oblique;
+        t.message = pMsg ? pMsg : L"";
+        t.layerId = currentLayer;
+        texts.push_back(t);
+        return Adesk::kFalse;
+    }
+
+    Adesk::Boolean text(const AcGePoint3d& position, const AcGeVector3d& normal,
+                        const AcGeVector3d& direction, const ACHAR* pMsg,
+                        const Adesk::Int32 length, const Adesk::Boolean raw,
+                        const AcGiTextStyle& textStyle) const override
+    {
+        Text t;
+        t.position = position;
+        t.normal = normal;
+        t.direction = direction;
+        t.height = textStyle.textSize();
+        t.width = 1.0;
+        t.oblique = 0.0;
+        t.message = pMsg ? pMsg : L"";
+        t.layerId = currentLayer;
+        t.hasStyle = true;
+        t.styleName = textStyle.styleName();
+        t.styleLoaded = textStyle.mockLoaded();
+        t.length = length;
+        t.raw = raw;
+        texts.push_back(t);
         return Adesk::kFalse;
     }
 };

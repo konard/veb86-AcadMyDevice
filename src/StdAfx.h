@@ -23,6 +23,7 @@
 #include "dbfiler.h"
 #include "dbproxy.h"
 #include "acgi.h"
+#include "acgiutil.h"
 #include "gepnt3d.h"
 #include "gevec3d.h"
 #include "gemat3d.h"

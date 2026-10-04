@@ -7,6 +7,20 @@
 
 #include "StdAfx.h"
 
+// Параметры одного текста MyDevice.
+// Высота и положение задаются в локальной системе координат объекта:
+// при перемещении, повороте и масштабировании MyDevice они не меняются,
+// а текст преобразуется вместе с объектом.
+struct MyDeviceText
+{
+    AcString text;       // содержимое
+    double   height;     // высота текста
+    double   x;          // начало базовой линии, локальная X
+    double   y;          // начало базовой линии, локальная Y
+    AcString layer;      // имя слоя; пустая строка — слой самого MyDevice
+    AcString textStyle;  // имя текстового стиля AutoCAD (шрифт)
+};
+
 class MyDevice : public AcDbEntity
 {
 public:
@@ -14,13 +28,20 @@ public:
 
     // Версия формата данных MyDevice в DWG/DXF.
     // Увеличивать при каждом изменении набора сохраняемых полей.
-    static constexpr Adesk::Int16 kCurrentVersion = 1;
+    // 1 — этап 1 (только строки Text1/Text2), 2 — полные свойства текстов.
+    static constexpr Adesk::Int16 kCurrentVersion = 2;
 
     // Геометрия в локальной системе координат объекта (единицы чертежа).
     static const double kWidth;       // ширина прямоугольника
     static const double kHeight;      // высота прямоугольника
-    static const double kTextHeight;  // высота текста
-    static const double kTextMargin;  // отступ текста от левого края
+    static const double kTextHeight;  // высота текста по умолчанию
+    static const double kTextMargin;  // отступ текста от левого края по умолчанию
+
+    // Номера текстов для textAt()/setTextAt().
+    enum TextIndex { kText1 = 0, kText2 = 1, kTextCount = 2 };
+
+    // Текстовый стиль по умолчанию — есть в любом чертеже.
+    static const ACHAR* const kDefaultTextStyle;
 
     MyDevice();
     explicit MyDevice(const AcGePoint3d& position);
@@ -45,6 +66,16 @@ public:
 
     AcString text2() const;
     Acad::ErrorStatus setText2(const AcString& text);
+
+    // Все параметры текста index (kText1 или kText2).
+    // setTextAt() отклоняет неверный номер, высоту <= 0, нечисловые координаты
+    // и пустое имя стиля (eInvalidInput); объект при этом не меняется.
+    // Слой и стиль хранятся по имени и в базе данных не создаются.
+    MyDeviceText textAt(int index) const;
+    Acad::ErrorStatus setTextAt(int index, const MyDeviceText& data);
+
+    // Параметры текста по умолчанию (как на этапе 1).
+    static MyDeviceText defaultText(int index);
 
     // Матрица перехода из локальной системы координат объекта в МСК.
     AcGeMatrix3d localToWorld() const;
@@ -76,10 +107,12 @@ private:
     // Углы прямоугольника в МСК: [0] — точка вставки, далее против часовой стрелки.
     void getCorners(AcGePoint3d corners[4]) const;
 
+    // Рисует один текст его стилем и на его слое.
+    void drawText(AcGiWorldDraw* pWd, AcDbDatabase* pDb, const MyDeviceText& text) const;
+
     AcGePoint3d  m_position;
     AcGeVector3d m_xDirection;
     AcGeVector3d m_normal;
     double       m_scale;
-    AcString     m_text1;
-    AcString     m_text2;
+    MyDeviceText m_texts[kTextCount];
 };

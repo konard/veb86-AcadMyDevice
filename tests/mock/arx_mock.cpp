@@ -1,6 +1,7 @@
 // arx_mock.cpp — реализация имитации ObjectARX для модульных тестов.
 #include "arx_mock.h"
 
+#include <cwctype>
 #include <memory>
 
 const AcGeVector3d AcGeVector3d::kIdentity(0.0, 0.0, 0.0);
@@ -27,7 +28,27 @@ namespace mock
 
 namespace
 {
+    // Резидентные записи таблиц символов — для поиска объекта по идентификатору.
+    // Объявлен раньше рабочей базы: при выходе база удаляется первой и ещё обращается к нему.
+    std::map<intptr_t, AcDbObject*> g_objects;
+    // Идентификаторы уникальны во всех базах, как в AutoCAD.
+    intptr_t g_nextObjectId = 1;
     std::unique_ptr<AcDbDatabase> g_workingDatabase;
+
+    AcDbObjectId newObjectId()
+    {
+        return AcDbObjectId(g_nextObjectId++);
+    }
+
+    bool sameSymbolName(const std::wstring& a, const std::wstring& b)
+    {
+        if (a.size() != b.size())
+            return false;
+        for (size_t i = 0; i < a.size(); ++i)
+            if (std::towupper(a[i]) != std::towupper(b[i]))
+                return false;
+        return true;
+    }
     AcEdCommandStack g_commandStack;
     AcDbHostApplicationServices g_hostServices;
 
@@ -251,8 +272,112 @@ Acad::ErrorStatus AcDbBlockTableRecord::appendAcDbEntity(AcDbObjectId& id, AcDbE
     if (pEntity == nullptr)
         return Acad::eInvalidInput;
     entities.push_back(pEntity);
-    id = AcDbObjectId(static_cast<intptr_t>(entities.size()));
+    id = newObjectId();
+    pEntity->mockAttach(database(), id);
     return Acad::eOk;
+}
+
+// ---------------------------------------------------------------------------
+// Таблицы символов
+// ---------------------------------------------------------------------------
+
+Acad::ErrorStatus AcDbSymbolUtilities::Services::validateSymbolName(const ACHAR* name,
+                                                                    bool allowVerticalBar) const
+{
+    if (name == nullptr || *name == L'\0')
+        return Acad::eInvalidInput;
+    const std::wstring str(name);
+    if (str.find_first_of(L"<>/\\\":;?*,=`") != std::wstring::npos)
+        return Acad::eInvalidInput;
+    if (!allowVerticalBar && str.find(L'|') != std::wstring::npos)
+        return Acad::eInvalidInput;
+    // Имя не может начинаться или заканчиваться пробелом.
+    if (str.front() == L' ' || str.back() == L' ')
+        return Acad::eInvalidInput;
+    return Acad::eOk;
+}
+
+const AcDbSymbolUtilities::Services* acdbSymUtil()
+{
+    static AcDbSymbolUtilities::Services services;
+    return &services;
+}
+
+Acad::ErrorStatus AcDbSymbolTableRecord::setName(const ACHAR* pName)
+{
+    if (acdbSymUtil()->validateSymbolName(pName, false) != Acad::eOk)
+        return Acad::eInvalidInput;
+    m_name = pName;
+    return Acad::eOk;
+}
+
+AcDbSymbolTable::~AcDbSymbolTable()
+{
+    for (AcDbSymbolTableRecord* pRecord : records)
+    {
+        g_objects.erase(pRecord->objectId().value());
+        delete pRecord;
+    }
+}
+
+Acad::ErrorStatus AcDbSymbolTable::getAt(const ACHAR* entryName, AcDbObjectId& recordId,
+                                         bool /*getErasedRecord*/) const
+{
+    if (entryName == nullptr)
+        return Acad::eInvalidInput;
+    for (const AcDbSymbolTableRecord* pRecord : records)
+    {
+        if (sameSymbolName(pRecord->mockName(), entryName))
+        {
+            recordId = pRecord->objectId();
+            return Acad::eOk;
+        }
+    }
+    return Acad::eKeyNotFound;
+}
+
+Acad::ErrorStatus AcDbSymbolTable::addRecord(AcDbSymbolTableRecord* pRecord)
+{
+    addCalls++;
+    if (pRecord == nullptr || pRecord->mockName().empty())
+        return Acad::eInvalidInput;
+    if (has(pRecord->mockName().c_str()))
+        return Acad::eDuplicateRecordName;
+    pRecord->mockAttach(m_pDb, newObjectId());
+    records.push_back(pRecord);
+    g_objects[pRecord->objectId().value()] = pRecord;
+    return Acad::eOk;
+}
+
+Acad::ErrorStatus fromAcDbTextStyle(AcGiTextStyle& style, const AcDbObjectId& styleId)
+{
+    auto it = g_objects.find(styleId.value());
+    AcDbTextStyleTableRecord* pRecord =
+        it == g_objects.end() ? nullptr : dynamic_cast<AcDbTextStyleTableRecord*>(it->second);
+    if (pRecord == nullptr)
+        return Acad::eInvalidInput;
+    style.setStyleName(pRecord->mockName().c_str());
+    return Acad::eOk;
+}
+
+// ---------------------------------------------------------------------------
+// AcDbEntity: слой
+// ---------------------------------------------------------------------------
+
+void AcDbEntity::setDatabaseDefaults(AcDbDatabase* pDb)
+{
+    m_pDefaultsDb = pDb;
+    if (pDb)
+        m_layer = pDb->clayer;
+}
+
+AcDbObjectId AcDbEntity::layerId() const
+{
+    AcDbDatabase* pDb = database() ? database() : m_pDefaultsDb;
+    AcDbObjectId id;
+    if (pDb == nullptr || pDb->layerTable.getAt(m_layer.kACharPtr(), id) != Acad::eOk)
+        return AcDbObjectId();
+    return id;
 }
 
 Acad::ErrorStatus AcDbBlockTable::getAt(const ACHAR* entryName, AcDbBlockTableRecord*& pRec,
@@ -266,8 +391,53 @@ Acad::ErrorStatus AcDbBlockTable::getAt(const ACHAR* entryName, AcDbBlockTableRe
 }
 
 AcDbDatabase::AcDbDatabase()
+    : layerTable(this)
+    , textStyleTable(this)
+    , clayer(L"0")
 {
     blockTable.modelSpace = &modelSpace;
+    modelSpace.mockAttach(this, newObjectId());
+    mockAddLayer(L"0");
+    mockAddTextStyle(L"Standard");
+}
+
+Acad::ErrorStatus AcDbDatabase::getLayerTable(AcDbLayerTable*& pTable, AcDb::OpenMode mode)
+{
+    lastLayerTableMode = mode;
+    pTable = &layerTable;
+    return Acad::eOk;
+}
+
+Acad::ErrorStatus AcDbDatabase::getTextStyleTable(AcDbTextStyleTable*& pTable, AcDb::OpenMode mode)
+{
+    lastTextStyleTableMode = mode;
+    pTable = &textStyleTable;
+    return Acad::eOk;
+}
+
+AcDbObjectId AcDbDatabase::mockAddLayer(const ACHAR* name)
+{
+    AcDbLayerTableRecord* pRecord = new AcDbLayerTableRecord();
+    if (pRecord->setName(name) != Acad::eOk || layerTable.add(pRecord) != Acad::eOk)
+    {
+        delete pRecord;
+        return AcDbObjectId();
+    }
+    layerTable.addCalls--;  // служебное добавление не считается
+    return pRecord->objectId();
+}
+
+AcDbObjectId AcDbDatabase::mockAddTextStyle(const ACHAR* name, bool isShapeFile)
+{
+    AcDbTextStyleTableRecord* pRecord = new AcDbTextStyleTableRecord();
+    pRecord->setIsShapeFile(isShapeFile);
+    if (pRecord->setName(name) != Acad::eOk || textStyleTable.add(pRecord) != Acad::eOk)
+    {
+        delete pRecord;
+        return AcDbObjectId();
+    }
+    textStyleTable.addCalls--;
+    return pRecord->objectId();
 }
 
 AcDbDatabase::~AcDbDatabase()

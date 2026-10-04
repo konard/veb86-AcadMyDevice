@@ -17,7 +17,8 @@ bool registerMyDeviceProperties()
 {
     opmStub::registerCalls++;
     opmStub::registered = true;
-    opmStub::classReadyAtRegister = MyDevice::desc() != nullptr;
+    // Класс должен быть в словаре ACRX (указатель desc() после удаления класса висячий).
+    opmStub::classReadyAtRegister = mockFindClass(L"MyDevice") != nullptr;
     return true;
 }
 
@@ -25,5 +26,5 @@ void unregisterMyDeviceProperties()
 {
     opmStub::unregisterCalls++;
     opmStub::registered = false;
-    opmStub::classReadyAtUnregister = MyDevice::desc() != nullptr;
+    opmStub::classReadyAtUnregister = mockFindClass(L"MyDevice") != nullptr;
 }

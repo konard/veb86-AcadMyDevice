@@ -11,4 +11,5 @@ x64/
 
 # Тесты (CMake)
 build/
+build-*/
 ci-logs/

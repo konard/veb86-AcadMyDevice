@@ -47,6 +47,7 @@ namespace Acad
         eOk = 0,
         eNotApplicable = 3,
         eInvalidInput = 4,
+        eNullObjectPointer = 9,
         eOutOfMemory = 11,
         eInvalidDxfCode = 16,
         eMissingDxfField = 17,
@@ -54,6 +55,7 @@ namespace Acad
         eEndOfFile = 20,
         eMakeMeProxy = 80,
         eCannotScaleNonUniformly = 136,
+        eDuplicateRecordName = 145,
         eKeyNotFound = 150,
     };
 }
@@ -315,6 +317,9 @@ public:
     AcString& operator=(const wchar_t* s) { m_str = s ? s : L""; return *this; }
     bool operator==(const wchar_t* s) const { return m_str == (s ? s : L""); }
     bool operator==(const AcString& s) const { return m_str == s.m_str; }
+    bool operator!=(const wchar_t* s) const { return !(*this == s); }
+    bool operator!=(const AcString& s) const { return !(*this == s); }
+    bool isEmpty() const { return m_str.empty(); }
     const ACHAR* kACharPtr() const { return m_str.c_str(); }
     const wchar_t* kwszPtr() const { return m_str.c_str(); }
     int length() const { return static_cast<int>(m_str.size()); }
@@ -424,8 +429,74 @@ public:
 };
 
 // ---------------------------------------------------------------------------
+// Идентификатор объекта базы данных (нужен уже в AcGi)
+// ---------------------------------------------------------------------------
+
+class AcDbDatabase;
+
+class AcDbObjectId
+{
+public:
+    AcDbObjectId() : m_id(0) {}
+    explicit AcDbObjectId(intptr_t id) : m_id(id) {}
+    bool isNull() const { return m_id == 0; }
+    intptr_t value() const { return m_id; }
+    bool operator==(const AcDbObjectId& other) const { return m_id == other.m_id; }
+    bool operator!=(const AcDbObjectId& other) const { return m_id != other.m_id; }
+
+private:
+    intptr_t m_id;
+};
+
+// ---------------------------------------------------------------------------
 // AcGi
 // ---------------------------------------------------------------------------
+
+// Текстовый стиль для отрисовки. В имитации хранит только имя стиля и высоту.
+class AcGiTextStyle
+{
+public:
+    AcGiTextStyle(AcDbDatabase* pDb = nullptr) : m_pDb(pDb), m_textSize(1.0) {}
+    virtual ~AcGiTextStyle() {}
+
+    const ACHAR* styleName() const { return m_styleName.c_str(); }
+    Acad::ErrorStatus setStyleName(const ACHAR* name)
+    {
+        m_styleName = name ? name : L"";
+        return Acad::eOk;
+    }
+    double textSize() const { return m_textSize; }
+    virtual void setTextSize(const double size) { m_textSize = size; }
+    // В AutoCAD загружает шрифт; в имитации только запоминает вызов.
+    virtual int loadStyleRec(AcDbDatabase* pDb = nullptr) const
+    {
+        m_loaded = true;
+        if (pDb)
+            m_pDb = pDb;
+        return 0;
+    }
+
+    // Только для тестов.
+    bool mockLoaded() const { return m_loaded; }
+    AcDbDatabase* mockDatabase() const { return m_pDb; }
+
+private:
+    mutable AcDbDatabase* m_pDb;
+    double m_textSize;
+    std::wstring m_styleName;
+    mutable bool m_loaded = false;
+};
+
+// Заполняет AcGiTextStyle по записи таблицы текстовых стилей (acgiutil.h).
+Acad::ErrorStatus fromAcDbTextStyle(AcGiTextStyle& style, const AcDbObjectId& styleId);
+
+class AcGiSubEntityTraits
+{
+public:
+    virtual ~AcGiSubEntityTraits() {}
+    virtual void setLayer(const AcDbObjectId layerId) = 0;
+    virtual AcDbObjectId layerId() const = 0;
+};
 
 class AcGiWorldGeometry
 {
@@ -438,6 +509,10 @@ public:
                                 const AcGeVector3d& direction, const double height,
                                 const double width, const double oblique,
                                 const ACHAR* pMsg) const = 0;
+    virtual Adesk::Boolean text(const AcGePoint3d& position, const AcGeVector3d& normal,
+                                const AcGeVector3d& direction, const ACHAR* pMsg,
+                                const Adesk::Int32 length, const Adesk::Boolean raw,
+                                const AcGiTextStyle& textStyle) const = 0;
 };
 
 class AcGiWorldDraw
@@ -445,6 +520,7 @@ class AcGiWorldDraw
 public:
     virtual ~AcGiWorldDraw() {}
     virtual AcGiWorldGeometry& geometry() const = 0;
+    virtual AcGiSubEntityTraits& subEntityTraits() const = 0;
     virtual Adesk::Boolean regenAbort() const = 0;
 };
 
@@ -543,25 +619,16 @@ namespace AcRx
 // AcDb
 // ---------------------------------------------------------------------------
 
-class AcDbDatabase;
-
-class AcDbObjectId
-{
-public:
-    AcDbObjectId() : m_id(0) {}
-    explicit AcDbObjectId(intptr_t id) : m_id(id) {}
-    bool isNull() const { return m_id == 0; }
-    intptr_t value() const { return m_id; }
-
-private:
-    intptr_t m_id;
-};
-
 class AcDbObject : public AcRxObject
 {
 public:
     Acad::ErrorStatus close() { m_closeCount++; return Acad::eOk; }
     int closeCount() const { return m_closeCount; }
+
+    AcDbDatabase* database() const { return m_pDatabase; }
+    AcDbObjectId objectId() const { return m_id; }
+    // Только для имитации: объект становится резидентным в базе pDb.
+    void mockAttach(AcDbDatabase* pDb, AcDbObjectId id) { m_pDatabase = pDb; m_id = id; }
 
     virtual Acad::ErrorStatus dwgInFields(AcDbDwgFiler* pFiler);
     virtual Acad::ErrorStatus dwgOutFields(AcDbDwgFiler* pFiler) const;
@@ -569,12 +636,14 @@ public:
     virtual Acad::ErrorStatus dxfOutFields(AcDbDxfFiler* pFiler) const;
 
 protected:
-    AcDbObject() : m_closeCount(0) {}
+    AcDbObject() : m_closeCount(0), m_pDatabase(nullptr) {}
     void assertReadEnabled() const {}
     void assertWriteEnabled() {}
 
 private:
     int m_closeCount;
+    AcDbDatabase* m_pDatabase;
+    AcDbObjectId m_id;
 };
 
 class AcDbEntity : public AcDbObject
@@ -598,10 +667,13 @@ public:
         return subMoveGripPointsAt(indices, offset);
     }
 
-    void setDatabaseDefaults(AcDbDatabase* pDb) { m_pDefaultsDb = pDb; }
+    // Как в AutoCAD, назначает объекту текущий слой базы данных (CLAYER).
+    void setDatabaseDefaults(AcDbDatabase* pDb);
     AcDbDatabase* defaultsDatabase() const { return m_pDefaultsDb; }
 
-    const AcString& layer() const { return m_layer; }
+    Acad::ErrorStatus layer(AcString& name) const { name = m_layer; return Acad::eOk; }
+    // Идентификатор слоя по имени в базе объекта; пустой, если слоя нет.
+    AcDbObjectId layerId() const;
     void setLayer(const AcString& layer) { m_layer = layer; }
 
     Acad::ErrorStatus dwgInFields(AcDbDwgFiler* pFiler) override;
@@ -657,6 +729,139 @@ public:
     std::vector<AcDbEntity*> entities;
 };
 
+// Таблицы символов. Имена сравниваются без учёта регистра, как в AutoCAD.
+class AcDbSymbolTableRecord : public AcDbObject
+{
+public:
+    AcRxClass* isA() const override { return nullptr; }
+    Acad::ErrorStatus getName(AcString& name) const { name = m_name.c_str(); return Acad::eOk; }
+    Acad::ErrorStatus setName(const ACHAR* pName);
+    const std::wstring& mockName() const { return m_name; }
+
+private:
+    std::wstring m_name;
+};
+
+class AcDbLayerTableRecord : public AcDbSymbolTableRecord
+{
+};
+
+class AcDbTextStyleTableRecord : public AcDbSymbolTableRecord
+{
+public:
+    Adesk::Boolean isShapeFile() const { return m_isShapeFile; }
+    void setIsShapeFile(Adesk::Boolean shape) { m_isShapeFile = shape; }
+
+private:
+    Adesk::Boolean m_isShapeFile = Adesk::kFalse;
+};
+
+class AcDbSymbolTable : public AcDbObject
+{
+public:
+    explicit AcDbSymbolTable(AcDbDatabase* pDb) : m_pDb(pDb) {}
+    ~AcDbSymbolTable() override;
+    AcRxClass* isA() const override { return nullptr; }
+
+    Acad::ErrorStatus getAt(const ACHAR* entryName, AcDbObjectId& recordId,
+                            bool getErasedRecord = false) const;
+    bool has(const ACHAR* name) const
+    {
+        AcDbObjectId id;
+        return getAt(name, id) == Acad::eOk;
+    }
+
+    // Записи в порядке добавления; принадлежат таблице.
+    std::vector<AcDbSymbolTableRecord*> records;
+    int addCalls = 0;
+
+protected:
+    Acad::ErrorStatus addRecord(AcDbSymbolTableRecord* pRecord);
+
+private:
+    AcDbDatabase* m_pDb;
+};
+
+template <class RecordType>
+class MockSymbolTableIterator
+{
+public:
+    explicit MockSymbolTableIterator(const std::vector<AcDbSymbolTableRecord*>& records)
+        : m_records(records), m_index(0) {}
+
+    void start(bool atBeginning = true, bool /*skipDeleted*/ = true)
+    {
+        m_index = atBeginning ? 0 : m_records.size();
+    }
+    bool done() const { return m_index >= m_records.size(); }
+    Acad::ErrorStatus step(bool /*forward*/ = true, bool /*skipDeleted*/ = true)
+    {
+        ++m_index;
+        return Acad::eOk;
+    }
+    Acad::ErrorStatus getRecordId(AcDbObjectId& id) const
+    {
+        if (done())
+            return Acad::eInvalidInput;
+        id = m_records[m_index]->objectId();
+        return Acad::eOk;
+    }
+    Acad::ErrorStatus getRecord(RecordType*& pRecord, AcDb::OpenMode /*openMode*/ = AcDb::kForRead,
+                                bool /*openErasedRec*/ = false) const
+    {
+        if (done())
+            return Acad::eInvalidInput;
+        pRecord = static_cast<RecordType*>(m_records[m_index]);
+        return Acad::eOk;
+    }
+
+private:
+    std::vector<AcDbSymbolTableRecord*> m_records;
+    size_t m_index;
+};
+
+typedef MockSymbolTableIterator<AcDbLayerTableRecord> AcDbLayerTableIterator;
+typedef MockSymbolTableIterator<AcDbTextStyleTableRecord> AcDbTextStyleTableIterator;
+
+class AcDbLayerTable : public AcDbSymbolTable
+{
+public:
+    using AcDbSymbolTable::AcDbSymbolTable;
+    Acad::ErrorStatus add(AcDbLayerTableRecord* pRecord) { return addRecord(pRecord); }
+    Acad::ErrorStatus newIterator(AcDbLayerTableIterator*& pIterator, bool atBeginning = true,
+                                  bool skipDeleted = true) const
+    {
+        pIterator = new AcDbLayerTableIterator(records);
+        pIterator->start(atBeginning, skipDeleted);
+        return Acad::eOk;
+    }
+};
+
+class AcDbTextStyleTable : public AcDbSymbolTable
+{
+public:
+    using AcDbSymbolTable::AcDbSymbolTable;
+    Acad::ErrorStatus add(AcDbTextStyleTableRecord* pRecord) { return addRecord(pRecord); }
+    Acad::ErrorStatus newIterator(AcDbTextStyleTableIterator*& pIterator, bool atBeginning = true,
+                                  bool skipDeleted = true) const
+    {
+        pIterator = new AcDbTextStyleTableIterator(records);
+        pIterator->start(atBeginning, skipDeleted);
+        return Acad::eOk;
+    }
+};
+
+// Проверка имён символов (dbsymutl.h): пустые имена и запрещённые символы отклоняются.
+namespace AcDbSymbolUtilities
+{
+    class Services
+    {
+    public:
+        Acad::ErrorStatus validateSymbolName(const ACHAR* name, bool allowVerticalBar) const;
+    };
+}
+const AcDbSymbolUtilities::Services* acdbSymUtil();
+
 class AcDbBlockTable : public AcDbObject
 {
 public:
@@ -673,8 +878,23 @@ public:
     AcDbDatabase();
     ~AcDbDatabase();
     Acad::ErrorStatus getBlockTable(AcDbBlockTable*& pTable, AcDb::OpenMode mode);
+    Acad::ErrorStatus getLayerTable(AcDbLayerTable*& pTable, AcDb::OpenMode mode);
+    Acad::ErrorStatus getTextStyleTable(AcDbTextStyleTable*& pTable, AcDb::OpenMode mode);
+
+    // Только для имитации: создаёт запись таблицы с заданным именем.
+    AcDbObjectId mockAddLayer(const ACHAR* name);
+    AcDbObjectId mockAddTextStyle(const ACHAR* name, bool isShapeFile = false);
+
     AcDbBlockTable blockTable;
     AcDbBlockTableRecord modelSpace;
+    // Слой "0" и стиль "Standard" есть в любой базе.
+    AcDbLayerTable layerTable;
+    AcDbTextStyleTable textStyleTable;
+    // Текущий слой (CLAYER) для setDatabaseDefaults().
+    AcString clayer;
+    // Последний режим, в котором открывались таблицы слоёв и стилей.
+    AcDb::OpenMode lastLayerTableMode = AcDb::kForRead;
+    AcDb::OpenMode lastTextStyleTableMode = AcDb::kForRead;
 };
 
 class AcDbHostApplicationServices

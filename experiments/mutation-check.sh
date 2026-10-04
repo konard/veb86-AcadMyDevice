@@ -21,13 +21,32 @@ mutate() {  # file sed-expr description
     touch "$B/$1"
 }
 status=0
-mutate MyDevice.cpp '235s/m_text2/m_text1/' "Text2 читается в Text1 (DWG)"
-mutate MyDevice.cpp '234,235{s/m_text1/TMP/;s/m_text2/m_text1/;s/TMP/m_text2/}' "порядок Text1/Text2 в dwgIn"
-mutate MyDevice.cpp 's/m_text1(_T("TEXT1"))/m_text1(_T("TXT1"))/;s/m_text1(L"TEXT1")/m_text1(L"TXT1")/' "значение по умолчанию Text1"
-mutate MyDevice.cpp '185s/kHeight/kWidth/' "размер прямоугольника"
-mutate MyDevice.cpp '313s/pFiler->pushBackItem();//' "нет pushBackItem в dxfIn"
-mutate MyDevice.cpp '398s/!xform.isUniScaledOrtho()/false/' "нет проверки неравномерного масштаба"
-mutate MyDeviceCommand.cpp '30s/es = pModelSpace->appendAcDbEntity(entityId, pEntity);/es = Acad::eOk; (void)entityId;/' "объект не добавляется в модель"
-mutate MyDeviceCommand.cpp '34s/pEntity->close();/;/' "объект не закрывается после добавления"
+# Этап 1
+mutate MyDevice.cpp 's/pFiler->readString(texts\[kText2\].text);/pFiler->readString(texts[kText1].text);/' "Text2 читается в Text1 (DWG)"
+mutate MyDevice.cpp 's/readString(texts\[kText1\].text);/TMPX/;s/readString(texts\[kText2\].text);/readString(texts[kText1].text);/;s/TMPX/readString(texts[kText2].text);/' "порядок Text1/Text2 в dwgIn"
+mutate MyDevice.cpp 's/_T("TEXT1")/_T("TXT1")/' "значение по умолчанию Text1"
+mutate MyDevice.cpp 's/corners\[2\].set(kWidth, kHeight, 0.0);/corners[2].set(kWidth, kWidth, 0.0);/' "размер прямоугольника"
+mutate MyDevice.cpp 's/^            pFiler->pushBackItem();/            ;/' "нет pushBackItem в dxfIn"
+mutate MyDevice.cpp 's/if (!xform.isUniScaledOrtho())/if (false)/' "нет проверки неравномерного масштаба"
+mutate MyDeviceCommand.cpp 's/es = pModelSpace->appendAcDbEntity(entityId, pEntity);/es = Acad::eOk; (void)entityId;/' "объект не добавляется в модель"
+mutate MyDeviceCommand.cpp 's/^            pEntity->close();/            ;/' "объект не закрывается после добавления"
+# Этап 2: данные, отрисовка и сохранение текстов
+mutate MyDevice.cpp 's/if (version >= 2)/if (version > 2)/' "поля версии 2 не читаются из DWG"
+mutate MyDevice.cpp 's/pFiler->readDouble(&texts\[i\].y);/pFiler->readDouble(\&texts[i].x);/' "Y текста читается в X (DWG)"
+mutate MyDevice.cpp 's/texts\[rb.restype - kDxfTextLayerBase\].layer/texts[kText1].layer/' "слой Text2 читается в Text1 (DXF)"
+mutate MyDevice.cpp 's/return text.height > kTolerance && std::isfinite(text.height)/return std::isfinite(text.height)/' "нет проверки высоты > 0"
+mutate MyDevice.cpp 's/pWd->subEntityTraits().setLayer(textLayerId);/(void)textLayerId;/' "текст не получает свой слой"
+mutate MyDevice.cpp 's/textLayerId = layerId();/(void)0;/' "нет возврата к слою MyDevice"
+mutate MyDevice.cpp 's/styleId = findTextStyle(pDb, kDefaultTextStyle);/(void)0;/' "нет возврата к стилю Standard"
+mutate MyDevice.cpp 's/style.setTextSize(text.height \* m_scale);/style.setTextSize(text.height);/' "высота текста не масштабируется"
+mutate MyDeviceCommand.cpp 's/text.layer = currentLayer;/;/' "тексты нового объекта не на текущем слое"
+# Этап 2: палитра свойств
+mutate MyDeviceProperties.cpp 's/        text.x = value;/        text.y = value;/' "Position X пишется в Y"
+mutate MyDeviceProperties.cpp 's/const Acad::ErrorStatus es = ensureLayer(databaseOf(device), value);/const Acad::ErrorStatus es = Acad::eOk;/' "Layer не создаёт отсутствующий слой"
+mutate MyDeviceProperties.cpp 's/es = pTable->add(pRecord);/es = Acad::eDuplicateRecordName;/' "ensureLayer не добавляет слой"
+mutate MyDeviceProperties.cpp 's/if (!hasTextStyle(databaseOf(device), value))/if (!hasTextStyle(databaseOf(device), value) \&\& false)/' "Font принимает несуществующий стиль"
+mutate MyDeviceProperties.cpp 's/if (!pRecord->isShapeFile() && /if (/' "формы SHAPE в списке шрифтов"
+mutate acrxEntryPoint.cpp 's/^        registerMyDeviceProperties();/        ;/' "свойства палитры не регистрируются"
+mutate acrxEntryPoint.cpp '/^        unregisterMyDeviceProperties();/d;s/^        deleteAcRxClass(MyDevice::desc());/&\n        unregisterMyDeviceProperties();/' "свойства удаляются после удаления класса"
 cmake --build build >/dev/null
 exit $status

@@ -76,7 +76,7 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(ObjectArxDir)lib-$(Platform);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>rxapi.lib;acdb24.lib;acge24.lib;acgiapi.lib;ac1st24.lib;accore.lib;acad.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>rxapi.lib;acdb24.lib;acge24.lib;acgiapi.lib;ac1st24.lib;accore.lib;acad.lib;oleaut32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
     </Link>
   </ItemDefinitionGroup>
@@ -99,10 +99,14 @@
     <ClCompile Include="src\acrxEntryPoint.cpp" />
     <ClCompile Include="src\MyDevice.cpp" />
     <ClCompile Include="src\MyDeviceCommand.cpp" />
+    <ClCompile Include="src\MyDeviceOPM.cpp" />
+    <ClCompile Include="src\MyDeviceProperties.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\MyDevice.h" />
     <ClInclude Include="src\MyDeviceCommand.h" />
+    <ClInclude Include="src\MyDeviceOPM.h" />
+    <ClInclude Include="src\MyDeviceProperties.h" />
     <ClInclude Include="src\StdAfx.h" />
   </ItemGroup>
   <Target Name="CheckObjectArxDir" BeforeTargets="PrepareForBuild">

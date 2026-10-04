@@ -2,6 +2,7 @@
 #include "StdAfx.h"
 #include "MyDevice.h"
 #include "MyDeviceCommand.h"
+#include "MyDeviceOPM.h"
 
 // acrxGetApiVersion() реализована в rxapi.lib; экспортируем её без .def-файла.
 #if defined(_MSC_VER)
@@ -25,6 +26,9 @@ acrxEntryPoint(AcRx::AppMsgCode msg, void* pkt)
         MyDevice::rxInit();
         acrxBuildClassHierarchy();
 
+        // Категории «Text 1» и «Text 2» в палитре свойств.
+        registerMyDeviceProperties();
+
         acedRegCmds->addCommand(MYDEVICE_COMMAND_GROUP,
                                 _T("MYDEVICE"), _T("MYDEVICE"),
                                 ACRX_CMD_MODAL, MyDeviceCommand);
@@ -34,6 +38,7 @@ acrxEntryPoint(AcRx::AppMsgCode msg, void* pkt)
 
     case AcRx::kUnloadAppMsg:
         acedRegCmds->removeGroup(MYDEVICE_COMMAND_GROUP);
+        unregisterMyDeviceProperties();
         deleteAcRxClass(MyDevice::desc());
         acrxBuildClassHierarchy();
         break;

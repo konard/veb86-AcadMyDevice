@@ -19,6 +19,7 @@
 #include "MyDeviceCommand.h"
 #include "MyDeviceProperties.h"
 #include "mock_filers.h"
+#include "opm_stub.h"
 #include "test_framework.h"
 
 #include <limits>
@@ -124,15 +125,26 @@ TEST(EntryPoint_RegistersClassAndCommand_AndUnloadRemovesThem)
     // Приложение не разблокируется: выгрузка при живых объектах небезопасна.
     CHECK_EQ(mock::unlockCalls, 0);
     CHECK(mock::mdiAwareCalls >= 1);
+    // Свойства палитры регистрируются после регистрации класса MyDevice.
+    CHECK(opmStub::registered);
+    CHECK(opmStub::classReadyAtRegister);
+    const int registerCalls = opmStub::registerCalls;
+    const int unregisterCalls = opmStub::unregisterCalls;
 
     CHECK_EQ(acrxEntryPoint(AcRx::kUnloadAppMsg, nullptr), AcRx::kRetOK);
     CHECK(mockFindClass(L"MyDevice") == nullptr);
     CHECK(acedRegCmds->lookupGlobalCmd(L"MYDEVICE") == nullptr);
+    // ...и удаляются до удаления класса.
+    CHECK_EQ(opmStub::unregisterCalls, unregisterCalls + 1);
+    CHECK(!opmStub::registered);
+    CHECK(opmStub::classReadyAtUnregister);
 
     // Возвращаем приложение в загруженное состояние для остальных тестов.
     CHECK_EQ(acrxEntryPoint(AcRx::kInitAppMsg, nullptr), AcRx::kRetOK);
     CHECK(MyDevice::desc() != nullptr);
     CHECK(acedRegCmds->lookupGlobalCmd(L"MYDEVICE") != nullptr);
+    CHECK_EQ(opmStub::registerCalls, registerCalls + 1);
+    CHECK(opmStub::registered);
 }
 
 TEST(RuntimeClass_CreatesMyDeviceInstances)

@@ -61,7 +61,8 @@ public:
     static const BlockDescriptor& blockAt(int index);
 
     // Имя блока. Запись определяет тип блока заново и сбрасывает Visibility
-    // в состояние по умолчанию нового блока. Объект должен быть открыт на запись.
+    // в состояние по умолчанию нового блока (повторный выбор того же блока
+    // сохраняет текущее состояние). Объект должен быть открыт на запись.
     static AcString blockName(const MyDevice& device);
     static Acad::ErrorStatus setBlockName(MyDevice& device, const AcString& name);
 

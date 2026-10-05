@@ -2066,6 +2066,10 @@ TEST(Stage3_BlockName_SwitchUpdatesVisibility)
     // Повторный выбор DEVICE_B начинается с состояния по умолчанию.
     CHECK_EQ(P::setBlockName(*pDevice, L"DEVICE_B"), Acad::eOk);
     CHECK_WSTR(P::visibility(*pDevice).kACharPtr(), L"Front");
+    // Выбор того же блока ещё раз (палитра записывает значение повторно) состояние не сбрасывает.
+    CHECK_EQ(P::setVisibility(*pDevice, L"Side"), Acad::eOk);
+    CHECK_EQ(P::setBlockName(*pDevice, L"DEVICE_B"), Acad::eOk);
+    CHECK_WSTR(P::visibility(*pDevice).kACharPtr(), L"Side");
 
     // DEVICE_C — Dynamic Block без параметра видимости: Visibility не предоставляется.
     CHECK_EQ(P::setBlockName(*pDevice, L"DEVICE_C"), Acad::eOk);

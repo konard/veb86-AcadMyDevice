@@ -270,9 +270,14 @@ Acad::ErrorStatus MyDevice::setBlockName(const AcString& name)
     MyDeviceBlock::Info info;
     MyDeviceBlock::find(databaseOrWorking(), name, info);
 
+    // Новый блок начинается с состояния по умолчанию; тот же блок сохраняет своё состояние.
+    AcString visibility = info.hasVisibility ? info.states.front().name : AcString();
+    if (name == blockName() && info.findState(m_visibility) >= 0)
+        visibility = m_visibility;
+
     assertWriteEnabled();
     m_blockName = name;
-    m_visibility = info.hasVisibility ? info.states.front().name : AcString();
+    m_visibility = visibility;
     return Acad::eOk;
 }
 

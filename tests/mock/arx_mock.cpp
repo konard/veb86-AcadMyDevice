@@ -57,9 +57,12 @@ namespace
     AcEdCommandStack g_commandStack;
     AcDbHostApplicationServices g_hostServices;
 
+    // Реестр не уничтожается при выходе (как и классы AcRx): иначе базовые классы,
+    // на которые никто не ссылается (AcDbAttributeDefinition), LeakSanitizer
+    // считает утечкой.
     std::map<std::wstring, AcRxClass*>& classRegistry()
     {
-        static std::map<std::wstring, AcRxClass*> registry;
+        static std::map<std::wstring, AcRxClass*>& registry = *new std::map<std::wstring, AcRxClass*>();
         if (registry.empty())
         {
             AcRxClass* rxObject = new AcRxClass(L"AcRxObject", nullptr, 0, 0, 0, nullptr, nullptr, nullptr);
@@ -669,6 +672,7 @@ AcDbDatabase::~AcDbDatabase()
 Acad::ErrorStatus AcDbDatabase::getBlockTable(AcDbBlockTable*& pTable, AcDb::OpenMode /*mode*/)
 {
     pTable = &blockTable;
+    pTable->mockOpened();
     return Acad::eOk;
 }
 

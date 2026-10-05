@@ -934,6 +934,7 @@ public:
         if (done())
             return Acad::eInvalidInput;
         pRecord = static_cast<RecordType*>(m_records[m_index]);
+        pRecord->mockOpened();
         return Acad::eOk;
     }
 

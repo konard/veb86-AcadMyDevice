@@ -45,8 +45,13 @@ namespace
 
     AcDbObjectId objectIdOf(const resbuf* pRb)
     {
+        // В MSVC x64 rlname и ads_name — оба int64_t[2]; поэлементное копирование
+        // не зависит от того, как заголовки SDK выбирают тип ads_name.
+        ads_name name;
+        name[0] = pRb->resval.rlname[0];
+        name[1] = pRb->resval.rlname[1];
         AcDbObjectId id;
-        if (acdbGetObjectId(id, pRb->resval.rlname) != Acad::eOk)
+        if (acdbGetObjectId(id, name) != Acad::eOk)
             return AcDbObjectId();
         return id;
     }
